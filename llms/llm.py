@@ -30,8 +30,8 @@ def generate_iran_post() -> str:
                     "content": prompt
                 }
             ],
-            temperature=0.8,  # Some creativity but still focused
-            max_tokens=200
+            # temperature=0.8,  # Some creativity but still focused
+            max_completion_tokens=200
         )
         
         post_text = response.choices[0].message.content.strip()
