@@ -1,5 +1,7 @@
 import base64
+import http.client
 import json
+import logging
 import os
 import sys
 import time
@@ -107,6 +109,43 @@ def save_tokens(tokens: dict) -> None:
         json.dump(tokens, f, indent=2)
 
 
+def print_response_headers(headers) -> None:
+    """Print HTTP response headers in the requested format (lowercase, one per line)."""
+    # Handle both dict and httpx Headers objects
+    if hasattr(headers, 'items'):
+        items = headers.items()
+    elif isinstance(headers, dict):
+        items = headers.items()
+    else:
+        # Convert to dict if it's some other iterable
+        items = dict(headers).items()
+    
+    for key, value in items:
+        # Print in lowercase format: key: value
+        print(f"{key.lower()}: {value}")
+
+
+def print_request_headers(method: str, url: str, headers: dict) -> None:
+    """Print HTTP request headers in a formatted way."""
+    print(f"\n{'='*60}")
+    print(f"Request: {method} {url}")
+    print(f"{'='*60}")
+    print("Request Headers:")
+    for key, value in headers.items():
+        # Mask sensitive headers
+        if key.lower() == "authorization":
+            if value.startswith("Bearer "):
+                masked = f"Bearer {'*' * 20}"
+            elif value.startswith("Basic "):
+                masked = f"Basic {'*' * 20}"
+            else:
+                masked = "*" * 20
+            print(f"  {key}: {masked}")
+        else:
+            print(f"  {key}: {value}")
+    print(f"{'='*60}\n")
+
+
 def refresh_access_token() -> str:
     data = load_tokens()
     if not data or "refresh_token" not in data:
@@ -121,8 +160,16 @@ def refresh_access_token() -> str:
         "Content-Type": "application/x-www-form-urlencoded",
     }
 
+    print_request_headers("POST", url, headers)
+
     req = urllib.request.Request(url, data=body.encode(), headers=headers, method="POST")
     with urllib.request.urlopen(req) as resp:
+        # Print response headers
+        print("Response Headers:")
+        response_headers = dict(resp.headers.items())
+        print_response_headers(response_headers)
+        print()
+        
         out = json.loads(resp.read().decode())
     access_token = out["access_token"]
     new_tokens = {**data, "access_token": access_token, "token_type": out.get("token_type", "bearer")}
@@ -160,10 +207,76 @@ def get_valid_client() -> Client:
     return _run_oauth_flow()
 
 
+def setup_httpx_header_logging() -> None:
+    """Set up httpx to intercept and print request/response headers."""
+    try:
+        import httpx
+        
+        # Store original request method
+        original_request = httpx.Client.request
+        
+        def request_with_header_logging(self, method, url, **kwargs):
+            """Intercept request and print headers, then print response headers."""
+            headers = kwargs.get('headers', {})
+            # Merge with default headers if they exist
+            if hasattr(self, 'headers'):
+                merged_headers = {**self.headers, **headers}
+            else:
+                merged_headers = headers
+            
+            print_request_headers(method, str(url), merged_headers)
+            
+            # Call original request method
+            response = original_request(self, method, url, **kwargs)
+            
+            # Print response headers
+            print("Response Headers:")
+            print_response_headers(response.headers)
+            print()
+            
+            return response
+        
+        # Monkey-patch httpx.Client.request
+        httpx.Client.request = request_with_header_logging
+        
+        # Also patch AsyncClient if needed
+        if hasattr(httpx, 'AsyncClient'):
+            original_async_request = httpx.AsyncClient.request
+            
+            async def async_request_with_header_logging(self, method, url, **kwargs):
+                """Intercept async request and print headers, then print response headers."""
+                headers = kwargs.get('headers', {})
+                if hasattr(self, 'headers'):
+                    merged_headers = {**self.headers, **headers}
+                else:
+                    merged_headers = headers
+                
+                print_request_headers(method, str(url), merged_headers)
+                
+                response = await original_async_request(self, method, url, **kwargs)
+                
+                # Print response headers
+                print("Response Headers:")
+                print_response_headers(response.headers)
+                print()
+                
+                return response
+            
+            httpx.AsyncClient.request = async_request_with_header_logging
+            
+    except ImportError:
+        # httpx not available, fall back to basic http.client logging
+        http.client.HTTPConnection.debuglevel = 1
+        logging.basicConfig(level=logging.DEBUG)
+
+
 def main() -> None:
     if not all([client_id, client_secret, redirect_uri]):
         print("Missing X_CLIENT_ID, X_CLIENT_SECRET, or X_REDIRECT_URI in environment.", file=sys.stderr)
         sys.exit(1)
+
+    # Enable HTTP header logging to see request headers
+    setup_httpx_header_logging()
 
     client = get_valid_client()
     interval_seconds = 30 * 60  # 30 minutes
@@ -176,6 +289,7 @@ def main() -> None:
             print(f"Generated post: {post_text}")
             payload = {"text": post_text}
             
+            print("\nMaking request to X API...")
             response = client.posts.create(body=payload)
             print("Tweet posted successfully.")
             print(json.dumps(response.data, indent=2, sort_keys=True))
@@ -188,6 +302,7 @@ def main() -> None:
                 # Regenerate post for retry
                 post_text = generate_iran_post()
                 payload = {"text": post_text}
+                print("\nMaking request to X API (after token refresh)...")
                 response = client.posts.create(body=payload)
                 print("Tweet posted successfully after token refresh.")
                 print(json.dumps(response.data, indent=2, sort_keys=True))
@@ -202,6 +317,7 @@ def main() -> None:
                     # Regenerate post for re-auth retry
                     post_text = generate_iran_post()
                     payload = {"text": post_text}
+                    print("\nMaking request to X API (after re-authorization)...")
                     response = client.posts.create(body=payload)
                     print("Tweet posted successfully after re-authorization.")
                     print(json.dumps(response.data, indent=2, sort_keys=True))
