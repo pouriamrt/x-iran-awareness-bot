@@ -207,6 +207,79 @@ def get_valid_client() -> Client:
     return _run_oauth_flow()
 
 
+def extract_rate_limit_info(response_headers) -> dict | None:
+    """Extract rate limit information from response headers."""
+    try:
+        # Handle both dict and httpx Headers objects
+        if hasattr(response_headers, 'get'):
+            headers = response_headers
+        elif hasattr(response_headers, 'items'):
+            headers = dict(response_headers.items())
+        else:
+            return None
+        
+        # Get rate limit headers (case-insensitive)
+        rate_limit_info = {}
+        for key, value in headers.items():
+            key_lower = key.lower()
+            if key_lower == 'x-rate-limit-limit':
+                rate_limit_info['limit'] = int(value)
+            elif key_lower == 'x-rate-limit-remaining':
+                rate_limit_info['remaining'] = int(value)
+            elif key_lower == 'x-rate-limit-reset':
+                rate_limit_info['reset'] = int(value)
+        
+        return rate_limit_info if rate_limit_info else None
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def handle_rate_limit_error(error, response_headers=None) -> int:
+    """Handle rate limit error and return seconds to wait before retry."""
+    print("Rate limit exceeded (429 Too Many Requests)", file=sys.stderr)
+    
+    if response_headers:
+        rate_limit_info = extract_rate_limit_info(response_headers)
+        if rate_limit_info:
+            reset_time = rate_limit_info.get('reset')
+            remaining = rate_limit_info.get('remaining', 0)
+            limit = rate_limit_info.get('limit', 0)
+            
+            print(f"Rate limit info: {remaining}/{limit} requests remaining", file=sys.stderr)
+            
+            if reset_time:
+                current_time = int(time.time())
+                wait_seconds = max(0, reset_time - current_time) + 5  # Add 5 second buffer
+                
+                if wait_seconds > 0:
+                    wait_minutes = wait_seconds // 60
+                    wait_secs = wait_seconds % 60
+                    print(f"Rate limit resets at {reset_time} (Unix timestamp)", file=sys.stderr)
+                    print(f"Waiting {wait_minutes} minutes and {wait_secs} seconds before retry...", file=sys.stderr)
+                    return wait_seconds
+    
+    # Default wait time if we can't determine reset time
+    print("Could not determine rate limit reset time. Waiting 15 minutes...", file=sys.stderr)
+    return 15 * 60  # 15 minutes default
+
+
+def is_rate_limit_error(error) -> bool:
+    """Check if the error is a rate limit (429) error."""
+    error_str = str(error)
+    if "429" in error_str or "Too Many Requests" in error_str:
+        return True
+    
+    # Check if it's an httpx HTTPStatusError with status 429
+    try:
+        import httpx
+        if isinstance(error, httpx.HTTPStatusError):
+            return error.response.status_code == 429
+    except (ImportError, AttributeError):
+        pass
+    
+    return False
+
+
 def setup_httpx_header_logging() -> None:
     """Set up httpx to intercept and print request/response headers."""
     try:
@@ -294,6 +367,23 @@ def main() -> None:
             print("Tweet posted successfully.")
             print(json.dumps(response.data, indent=2, sort_keys=True))
         except Exception as e:
+            # Check if it's a rate limit error
+            if is_rate_limit_error(e):
+                # Try to get response headers from the error
+                response_headers = None
+                try:
+                    import httpx
+                    if isinstance(e, httpx.HTTPStatusError):
+                        response_headers = e.response.headers
+                except (ImportError, AttributeError):
+                    pass
+                
+                wait_seconds = handle_rate_limit_error(e, response_headers)
+                print(f"Sleeping for {wait_seconds // 60} minutes before next attempt...", file=sys.stderr)
+                time.sleep(wait_seconds)
+                continue  # Skip the normal interval and retry immediately
+            
+            # Not a rate limit error - try token refresh or re-auth
             print(f"Post failed: {e}", file=sys.stderr)
             retried = False
             try:
@@ -307,7 +397,20 @@ def main() -> None:
                 print("Tweet posted successfully after token refresh.")
                 print(json.dumps(response.data, indent=2, sort_keys=True))
                 retried = True
-            except Exception:
+            except Exception as retry_error:
+                # Check if retry also hit rate limit
+                if is_rate_limit_error(retry_error):
+                    response_headers = None
+                    try:
+                        import httpx
+                        if isinstance(retry_error, httpx.HTTPStatusError):
+                            response_headers = retry_error.response.headers
+                    except (ImportError, AttributeError):
+                        pass
+                    wait_seconds = handle_rate_limit_error(retry_error, response_headers)
+                    print(f"Sleeping for {wait_seconds // 60} minutes before next attempt...", file=sys.stderr)
+                    time.sleep(wait_seconds)
+                    continue
                 pass
             if not retried:
                 try:
@@ -322,6 +425,19 @@ def main() -> None:
                     print("Tweet posted successfully after re-authorization.")
                     print(json.dumps(response.data, indent=2, sort_keys=True))
                 except Exception as auth_err:
+                    # Check if re-auth also hit rate limit
+                    if is_rate_limit_error(auth_err):
+                        response_headers = None
+                        try:
+                            import httpx
+                            if isinstance(auth_err, httpx.HTTPStatusError):
+                                response_headers = auth_err.response.headers
+                        except (ImportError, AttributeError):
+                            pass
+                        wait_seconds = handle_rate_limit_error(auth_err, response_headers)
+                        print(f"Sleeping for {wait_seconds // 60} minutes before next attempt...", file=sys.stderr)
+                        time.sleep(wait_seconds)
+                        continue
                     print(f"Re-auth failed: {auth_err}", file=sys.stderr)
         print(f"Next post in {interval_seconds // 60} minutes…")
         time.sleep(interval_seconds)
