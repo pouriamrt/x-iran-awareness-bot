@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from xdk import Client
 from xdk.oauth2_auth import OAuth2PKCEAuth
 
+from llm import generate_iran_post
+
 load_dotenv()
 
 TOKENS_FILE = "tokens.json"
@@ -20,7 +22,6 @@ client_id = os.environ.get("X_CLIENT_ID")
 client_secret = os.environ.get("X_CLIENT_SECRET")
 redirect_uri = os.environ.get("X_REDIRECT_URI")
 scopes = ["tweet.read", "tweet.write", "users.read", "offline.access"]
-payload = {"text": "Hello world!"}
 
 
 def _parse_redirect_uri(uri: str) -> tuple[str, int, str]:
@@ -33,6 +34,7 @@ def _parse_redirect_uri(uri: str) -> tuple[str, int, str]:
 
 def _run_callback_server(host: str, port: int, base_path: str, redirect_base: str) -> str:
     callback_url_container: list[str] = []
+    timeout_seconds = 300  # 5 minutes timeout
 
     class CallbackHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -57,10 +59,37 @@ def _run_callback_server(host: str, port: int, base_path: str, redirect_base: st
             pass
 
     server = HTTPServer((host, port), CallbackHandler)
-    thread = Thread(target=server.handle_request)
+    server.timeout = 1  # Set socket timeout to 1 second
+    
+    def handle_request_with_timeout():
+        import time as time_module
+        start_time = time_module.time()
+        while time_module.time() - start_time < timeout_seconds:
+            try:
+                server.handle_request()
+                # If we get here, a request was handled (or timeout occurred)
+                if callback_url_container:
+                    break
+            except Exception:
+                # Timeout or other error, continue waiting
+                pass
+    
+    thread = Thread(target=handle_request_with_timeout, daemon=True)
     thread.start()
-    thread.join()
-    server.server_close()
+    thread.join(timeout=timeout_seconds)
+    
+    # Ensure server is closed
+    try:
+        server.server_close()
+    except Exception:
+        pass
+    
+    if thread.is_alive():
+        raise RuntimeError(
+            f"OAuth callback timeout after {timeout_seconds} seconds. "
+            "Please complete the authorization in the browser and try again."
+        )
+    
     if not callback_url_container:
         raise RuntimeError("Callback server did not receive the redirect URL.")
     return callback_url_container[0]
@@ -141,6 +170,12 @@ def main() -> None:
 
     while True:
         try:
+            # Generate a new post using LLM
+            print("Generating post using LLM...")
+            post_text = generate_iran_post()
+            print(f"Generated post: {post_text}")
+            payload = {"text": post_text}
+            
             response = client.posts.create(body=payload)
             print("Tweet posted successfully.")
             print(json.dumps(response.data, indent=2, sort_keys=True))
@@ -150,6 +185,9 @@ def main() -> None:
             try:
                 access_token = refresh_access_token()
                 client = Client(access_token=access_token)
+                # Regenerate post for retry
+                post_text = generate_iran_post()
+                payload = {"text": post_text}
                 response = client.posts.create(body=payload)
                 print("Tweet posted successfully after token refresh.")
                 print(json.dumps(response.data, indent=2, sort_keys=True))
@@ -161,6 +199,9 @@ def main() -> None:
                     if os.path.exists(TOKENS_FILE):
                         os.remove(TOKENS_FILE)
                     client = get_valid_client()
+                    # Regenerate post for re-auth retry
+                    post_text = generate_iran_post()
+                    payload = {"text": post_text}
                     response = client.posts.create(body=payload)
                     print("Tweet posted successfully after re-authorization.")
                     print(json.dumps(response.data, indent=2, sort_keys=True))
