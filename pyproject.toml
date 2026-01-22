@@ -1,7 +1,7 @@
 [project]
-name = "x-bot"
+name = "x-iran-awareness-bot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Automated X/Twitter bot powered by LLM that generates and posts Iran awareness content automatically. Features OAuth2 PKCE authentication, token refresh, and scheduled posting."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
