@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from xdk import Client
 from xdk.oauth2_auth import OAuth2PKCEAuth
 
-from llm import generate_iran_post
+from llms.llm import generate_iran_post
 
 load_dotenv()
 
