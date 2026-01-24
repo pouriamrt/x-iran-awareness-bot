@@ -9,6 +9,7 @@ import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
+from urllib.error import HTTPError as UrllibHTTPError
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -109,6 +110,25 @@ def save_tokens(tokens: dict) -> None:
         json.dump(tokens, f, indent=2)
 
 
+# Buffer in seconds before expiry to trigger proactive refresh (5 minutes)
+TOKEN_EXPIRY_BUFFER = 300
+# Default expiry if X API doesn't return expires_in (2 hours)
+DEFAULT_EXPIRES_IN = 7200
+
+
+def is_token_expired(tokens: dict) -> bool:
+    """Return True if the access token is expired or will expire within TOKEN_EXPIRY_BUFFER."""
+    if not tokens:
+        return True
+    obtained_at = tokens.get("obtained_at")
+    if obtained_at is None:
+        # Legacy tokens without obtained_at: treat as expired to force refresh/re-auth
+        return True
+    expires_in = tokens.get("expires_in", DEFAULT_EXPIRES_IN)
+    expires_at = obtained_at + expires_in
+    return int(time.time()) >= (expires_at - TOKEN_EXPIRY_BUFFER)
+
+
 def print_response_headers(headers) -> None:
     """Print HTTP response headers in the requested format (lowercase, one per line)."""
     # Handle both dict and httpx Headers objects
@@ -163,16 +183,28 @@ def refresh_access_token() -> str:
     print_request_headers("POST", url, headers)
 
     req = urllib.request.Request(url, data=body.encode(), headers=headers, method="POST")
-    with urllib.request.urlopen(req) as resp:
-        # Print response headers
-        print("Response Headers:")
-        response_headers = dict(resp.headers.items())
-        print_response_headers(response_headers)
-        print()
-        
-        out = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req) as resp:
+            # Print response headers
+            print("Response Headers:")
+            response_headers = dict(resp.headers.items())
+            print_response_headers(response_headers)
+            print()
+            
+            out = json.loads(resp.read().decode())
+    except UrllibHTTPError as e:
+        try:
+            body = (e.fp.read() if getattr(e, "fp", None) else b"").decode("utf-8", errors="replace")
+        except Exception:
+            body = getattr(e, "reason", "") or ""
+        raise RuntimeError(
+            f"Token refresh failed (HTTP {e.code}): {body or e.reason}. "
+            "Re-authorize the app."
+        ) from e
+
     access_token = out["access_token"]
     new_tokens = {**data, "access_token": access_token, "token_type": out.get("token_type", "bearer")}
+    new_tokens["obtained_at"] = int(time.time())
     if "expires_in" in out:
         new_tokens["expires_in"] = out["expires_in"]
     if "refresh_token" in out:
@@ -196,14 +228,32 @@ def _run_oauth_flow() -> Client:
     webbrowser.open(auth_url)
     callback_url = _run_callback_server(host, port, path, redirect_base)
     tokens = auth.fetch_token(authorization_response=callback_url)
-    save_tokens(dict(tokens))
+    tokens_dict = dict(tokens)
+    tokens_dict["obtained_at"] = int(time.time())
+    save_tokens(tokens_dict)
     return Client(access_token=tokens["access_token"])
 
 
 def get_valid_client() -> Client:
     tokens = load_tokens()
-    if tokens and tokens.get("access_token"):
+    if not tokens or not tokens.get("access_token"):
+        return _run_oauth_flow()
+
+    if not is_token_expired(tokens):
         return Client(access_token=tokens["access_token"])
+
+    # Token expired or about to expire — refresh or re-auth
+    if tokens.get("refresh_token"):
+        try:
+            access_token = refresh_access_token()
+            return Client(access_token=access_token)
+        except Exception:
+            if os.path.exists(TOKENS_FILE):
+                os.remove(TOKENS_FILE)
+            return _run_oauth_flow()
+
+    if os.path.exists(TOKENS_FILE):
+        os.remove(TOKENS_FILE)
     return _run_oauth_flow()
 
 
@@ -268,7 +318,7 @@ def is_rate_limit_error(error) -> bool:
     error_str = str(error)
     if "429" in error_str or "Too Many Requests" in error_str:
         return True
-    
+
     # Check if it's an httpx HTTPStatusError with status 429
     try:
         import httpx
@@ -276,7 +326,21 @@ def is_rate_limit_error(error) -> bool:
             return error.response.status_code == 429
     except (ImportError, AttributeError):
         pass
-    
+
+    return False
+
+
+def is_auth_error(error) -> bool:
+    """Check if the error is an auth (401/403) error."""
+    error_str = str(error).lower()
+    if "401" in error_str or "unauthorized" in error_str or "403" in error_str or "forbidden" in error_str:
+        return True
+    try:
+        import httpx
+        if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in (401, 403):
+            return True
+    except (ImportError, AttributeError):
+        pass
     return False
 
 
@@ -351,10 +415,11 @@ def main() -> None:
     # Enable HTTP header logging to see request headers
     setup_httpx_header_logging()
 
-    client = get_valid_client()
     interval_seconds = 30 * 60  # 30 minutes
 
     while True:
+        # Re-fetch client each iteration so we use a valid token (refresh if expired)
+        client = get_valid_client()
         try:
             # Generate a new post using LLM
             print("Generating post using LLM...")
@@ -385,6 +450,8 @@ def main() -> None:
             
             # Not a rate limit error - try token refresh or re-auth
             print(f"Post failed: {e}", file=sys.stderr)
+            if is_auth_error(e):
+                print("Auth expired or invalid, refreshing token...", file=sys.stderr)
             retried = False
             try:
                 access_token = refresh_access_token()
