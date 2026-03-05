@@ -5,7 +5,7 @@ Generate a powerful social media post about the massacre in Iran to raise global
 
 The post should:
 1. Condemn the atrocities and call for international attention
-2. Include relevant hashtags like #IranRevolution, #BlakoutIran, #DigitalBlackoutIran
+2. Include relevant hashtags like #IranRevolution, #BlackoutIran, #DigitalBlackoutIran
 3. Tag world leaders and organizations such as @realDonaldTrump, @netanyahu, @WhiteHouse, @EmmanuelMacron, @Keir_Starmer, @JustinTrudeau, @vonderleyen, @GiorgiaMeloni, @antonioguterres, @_FriedrichMerz
 4. Call for support of the Iranian people and democratic transition
 5. Be impactful and urgent in tone

@@ -10,7 +10,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from urllib.error import HTTPError as UrllibHTTPError
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from dotenv import load_dotenv
 from xdk import Client
@@ -173,7 +173,7 @@ def refresh_access_token() -> str:
     refresh_token = data["refresh_token"]
 
     url = "https://api.x.com/2/oauth2/token"
-    body = f"grant_type=refresh_token&refresh_token={refresh_token}"
+    body = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
     credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     headers = {
         "Authorization": f"Basic {credentials}",
@@ -247,7 +247,8 @@ def get_valid_client() -> Client:
         try:
             access_token = refresh_access_token()
             return Client(access_token=access_token)
-        except Exception:
+        except Exception as e:
+            print(f"Token refresh failed: {e}", file=sys.stderr)
             if os.path.exists(TOKENS_FILE):
                 os.remove(TOKENS_FILE)
             return _run_oauth_flow()
@@ -300,33 +301,59 @@ def handle_rate_limit_error(error, response_headers=None) -> int:
             if reset_time:
                 current_time = int(time.time())
                 wait_seconds = max(0, reset_time - current_time) + 5  # Add 5 second buffer
-                
-                if wait_seconds > 0:
-                    wait_minutes = wait_seconds // 60
-                    wait_secs = wait_seconds % 60
-                    print(f"Rate limit resets at {reset_time} (Unix timestamp)", file=sys.stderr)
-                    print(f"Waiting {wait_minutes} minutes and {wait_secs} seconds before retry...", file=sys.stderr)
-                    return wait_seconds
+                wait_minutes = wait_seconds // 60
+                wait_secs = wait_seconds % 60
+                print(f"Rate limit resets at {reset_time} (Unix timestamp)", file=sys.stderr)
+                print(f"Waiting {wait_minutes} minutes and {wait_secs} seconds before retry...", file=sys.stderr)
+                return wait_seconds
     
     # Default wait time if we can't determine reset time
     print("Could not determine rate limit reset time. Waiting 15 minutes...", file=sys.stderr)
     return 15 * 60  # 15 minutes default
 
 
-def is_rate_limit_error(error) -> bool:
-    """Check if the error is a rate limit (429) error."""
-    error_str = str(error)
-    if "429" in error_str or "Too Many Requests" in error_str:
-        return True
-
-    # Check if it's an httpx HTTPStatusError with status 429
+def _get_error_response(error):
+    """Extract response object from httpx or requests errors."""
+    try:
+        import requests as _req
+        if isinstance(error, _req.exceptions.HTTPError) and error.response is not None:
+            return error.response
+    except (ImportError, AttributeError):
+        pass
     try:
         import httpx
         if isinstance(error, httpx.HTTPStatusError):
-            return error.response.status_code == 429
+            return error.response
     except (ImportError, AttributeError):
         pass
+    return None
 
+
+def _get_status_code(error) -> int | None:
+    """Extract HTTP status code from httpx or requests errors."""
+    resp = _get_error_response(error)
+    return resp.status_code if resp is not None else None
+
+
+def is_rate_limit_error(error) -> bool:
+    """Check if the error is a rate limit (429) error."""
+    status = _get_status_code(error)
+    if status == 429:
+        return True
+    error_str = str(error)
+    return "429" in error_str or "Too Many Requests" in error_str
+
+
+def is_server_error(error) -> bool:
+    """Check if the error is a transient server error (5xx)."""
+    status = _get_status_code(error)
+    if status is not None:
+        return 500 <= status < 600
+    error_str = str(error)
+    if "503" in error_str or "502" in error_str or "500" in error_str:
+        return True
+    if "Service Unavailable" in error_str or "Bad Gateway" in error_str:
+        return True
     return False
 
 
@@ -412,6 +439,10 @@ def main() -> None:
         print("Missing X_CLIENT_ID, X_CLIENT_SECRET, or X_REDIRECT_URI in environment.", file=sys.stderr)
         sys.exit(1)
 
+    if not os.environ.get("OPENAI_API_KEY") or not os.environ.get("OPENAI_MODEL"):
+        print("Missing OPENAI_API_KEY or OPENAI_MODEL in environment.", file=sys.stderr)
+        sys.exit(1)
+
     # Enable HTTP header logging to see request headers
     setup_httpx_header_logging()
 
@@ -432,24 +463,36 @@ def main() -> None:
             print("Tweet posted successfully.")
             print(json.dumps(response.data, indent=2, sort_keys=True))
         except Exception as e:
+            # Extract and print response body for debugging (xdk uses requests, not httpx)
+            try:
+                import requests as _req
+                if isinstance(e, _req.exceptions.HTTPError) and e.response is not None:
+                    print(f"Response status: {e.response.status_code}", file=sys.stderr)
+                    print(f"Response body: {e.response.text}", file=sys.stderr)
+                    print(f"Response headers:", file=sys.stderr)
+                    print_response_headers(e.response.headers)
+            except Exception:
+                pass
+
             # Check if it's a rate limit error
             if is_rate_limit_error(e):
-                # Try to get response headers from the error
-                response_headers = None
-                try:
-                    import httpx
-                    if isinstance(e, httpx.HTTPStatusError):
-                        response_headers = e.response.headers
-                except (ImportError, AttributeError):
-                    pass
-                
+                err_resp = _get_error_response(e)
+                response_headers = err_resp.headers if err_resp is not None else None
                 wait_seconds = handle_rate_limit_error(e, response_headers)
                 print(f"Sleeping for {wait_seconds // 60} minutes before next attempt...", file=sys.stderr)
                 time.sleep(wait_seconds)
                 continue  # Skip the normal interval and retry immediately
             
-            # Not a rate limit error - try token refresh or re-auth
             print(f"Post failed: {e}", file=sys.stderr)
+
+            # Transient server error (5xx) — wait and retry, don't touch auth
+            if is_server_error(e):
+                wait_seconds = 60
+                print(f"Server error (transient). Retrying in {wait_seconds} seconds...", file=sys.stderr)
+                time.sleep(wait_seconds)
+                continue
+
+            # Auth error or unknown — try token refresh, then re-auth
             if is_auth_error(e):
                 print("Auth expired or invalid, refreshing token...", file=sys.stderr)
             retried = False
@@ -467,18 +510,13 @@ def main() -> None:
             except Exception as retry_error:
                 # Check if retry also hit rate limit
                 if is_rate_limit_error(retry_error):
-                    response_headers = None
-                    try:
-                        import httpx
-                        if isinstance(retry_error, httpx.HTTPStatusError):
-                            response_headers = retry_error.response.headers
-                    except (ImportError, AttributeError):
-                        pass
+                    err_resp = _get_error_response(retry_error)
+                    response_headers = err_resp.headers if err_resp is not None else None
                     wait_seconds = handle_rate_limit_error(retry_error, response_headers)
                     print(f"Sleeping for {wait_seconds // 60} minutes before next attempt...", file=sys.stderr)
                     time.sleep(wait_seconds)
                     continue
-                pass
+                print(f"Retry after token refresh failed: {retry_error}", file=sys.stderr)
             if not retried:
                 try:
                     if os.path.exists(TOKENS_FILE):
@@ -494,13 +532,8 @@ def main() -> None:
                 except Exception as auth_err:
                     # Check if re-auth also hit rate limit
                     if is_rate_limit_error(auth_err):
-                        response_headers = None
-                        try:
-                            import httpx
-                            if isinstance(auth_err, httpx.HTTPStatusError):
-                                response_headers = auth_err.response.headers
-                        except (ImportError, AttributeError):
-                            pass
+                        err_resp = _get_error_response(auth_err)
+                        response_headers = err_resp.headers if err_resp is not None else None
                         wait_seconds = handle_rate_limit_error(auth_err, response_headers)
                         print(f"Sleeping for {wait_seconds // 60} minutes before next attempt...", file=sys.stderr)
                         time.sleep(wait_seconds)

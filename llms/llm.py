@@ -34,9 +34,11 @@ def generate_iran_post() -> str:
             max_completion_tokens=200
         )
         
-        post_text = response.choices[0].message.content.strip()
-        return post_text
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("LLM returned empty content")
+        return content.strip()
     except Exception as e:
         # Fallback message if LLM call fails
         print(f"LLM generation failed: {e}", file=sys.stderr)
-        return "Stop negotiating with the murderers of Iranian. Support the Iranian people's demand for regime change. #IranRevolution #BlakoutIran @realDonaldTrump @EmmanuelMacron @Keir_Starmer @JustinTrudeau @vonderleyen @GiorgiaMeloni @antonioguterres"
+        return "Stop negotiating with the murderers of Iranians. Support the Iranian people's demand for regime change. #IranRevolution #BlackoutIran @realDonaldTrump @EmmanuelMacron @Keir_Starmer @JustinTrudeau @vonderleyen @GiorgiaMeloni @antonioguterres"
