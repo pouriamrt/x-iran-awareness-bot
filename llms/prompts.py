@@ -40,7 +40,9 @@ def build_trending_context(trending_posts: list[str]) -> str:
         "\n\n--- Latest trending posts about #KingRezaPahlavi and #JavidShah on X ---\n"
         f"{numbered}\n"
         "---\n\n"
-        "Use the above trending posts as inspiration and context. Reference current themes, "
-        "events, or sentiments from these posts to make your post timely and relevant. "
-        "Do NOT copy them — create something original that builds on the conversation."
+        "IMPORTANT: Your post MUST be primarily driven by the trending posts above. "
+        "They represent what people are talking about RIGHT NOW. Extract the dominant themes, "
+        "breaking news, key events, or emotional tone from these posts and build your post around them. "
+        "The background context below is secondary — use the trending posts as your primary source. "
+        "Do NOT copy them verbatim, but your post should clearly reflect and engage with the current conversation."
     )
