@@ -10,35 +10,50 @@ load_dotenv()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
+MAX_POST_LENGTH = 280
+MAX_RETRIES = 3
+
+
+def _call_llm(messages: list) -> str:
+    response = client.chat.completions.create(
+        model=os.environ.get("OPENAI_MODEL"),
+        messages=messages,
+        max_completion_tokens=250,
+    )
+    content = response.choices[0].message.content
+    if not content:
+        raise ValueError("LLM returned empty content")
+    return content.strip()
+
+
 def generate_iran_post() -> str:
     """
     Generate a post about the massacre in Iran using LLM.
-    The post will include hashtags, tags to world leaders, and raise awareness.
+    Retries up to MAX_RETRIES times if the post exceeds 280 characters.
     """
-    prompt = USER_PROMPT
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": USER_PROMPT},
+    ]
 
     try:
-        response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL"),
-            messages=[
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            # temperature=0.8,  # Some creativity but still focused
-            max_completion_tokens=200
-        )
-        
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("LLM returned empty content")
-        return content.strip()
+        for attempt in range(MAX_RETRIES):
+            post_text = _call_llm(messages)
+            if len(post_text) <= MAX_POST_LENGTH:
+                return post_text
+            print(
+                f"Post too long ({len(post_text)} chars), retrying ({attempt + 1}/{MAX_RETRIES})...",
+                file=sys.stderr,
+            )
+            messages.append({"role": "assistant", "content": post_text})
+            messages.append({
+                "role": "user",
+                "content": f"That post is {len(post_text)} characters. It MUST be under {MAX_POST_LENGTH} characters. Shorten it while keeping the core message, key hashtags, and a few mentions.",
+            })
+
+        # All retries exceeded — truncate as last resort
+        print(f"Could not generate post under {MAX_POST_LENGTH} chars after {MAX_RETRIES} retries, truncating.", file=sys.stderr)
+        return post_text[:MAX_POST_LENGTH]
     except Exception as e:
-        # Fallback message if LLM call fails
         print(f"LLM generation failed: {e}", file=sys.stderr)
-        return "Stop negotiating with the murderers of Iranians. Support the Iranian people's demand for regime change. #IranRevolution #BlackoutIran @realDonaldTrump @EmmanuelMacron @Keir_Starmer @JustinTrudeau @vonderleyen @GiorgiaMeloni @antonioguterres"
+        return "The Iranian people are rising for freedom. Support @PahlaviReza and the democratic transition. End the blackout. #JavidShah #IranRevolution #FreeIran @WhiteHouse @antonioguterres"

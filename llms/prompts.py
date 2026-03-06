@@ -1,17 +1,31 @@
 from textwrap import dedent
 
 USER_PROMPT = dedent("""
-Generate a powerful social media post about the massacre in Iran to raise global awareness. 
+Generate a powerful social media post about the ongoing crisis in Iran to raise global awareness.
+
+Current context (March 2026):
+- The Islamic Republic regime is massacring civilians amid nationwide protests that began Dec 2025
+- Supreme Leader Khamenei was killed in US-Israeli strikes on Feb 28, 2026 — the regime is collapsing
+- Iran is under a near-total internet blackout (connectivity at 4%) to hide the crackdown
+- Protests have spread to 200+ cities across all 31 provinces
+- Crown Prince Reza Pahlavi (@PahlaviReza) has stepped forward as transitional leader, calling for democracy, territorial integrity, separation of religion and state, and free elections
+- Iranians in the streets and diaspora are chanting "Javid Shah" (Long Live the King) as a rallying cry for unity
+- The European Parliament is considering inviting Pahlavi; he spoke at CPAC 2026 and on 60 Minutes
+- The regime is running influence operations on X to delegitimize the protests
 
 The post should:
-1. Condemn the atrocities and call for international attention
-2. Include relevant hashtags like #IranRevolution, #BlackoutIran, #DigitalBlackoutIran
-3. Tag world leaders and organizations such as @realDonaldTrump, @netanyahu, @WhiteHouse, @EmmanuelMacron, @Keir_Starmer, @JustinTrudeau, @vonderleyen, @GiorgiaMeloni, @antonioguterres, @_FriedrichMerz
-4. Call for support of the Iranian people and democratic transition
-5. Be impactful and urgent in tone
-6. Stay within Twitter/X character limits (280 characters)
-7. Include a mix of hashtags and mentions naturally
+1. Support the Iranian people's fight for freedom and democratic transition
+2. Reference Reza Pahlavi's role and the #JavidShah movement where appropriate
+3. Call out the regime's internet blackout and violence against protesters
+4. Use hashtags from this list (pick 2-3): #JavidShah #IranRevolution #BlackoutIran #DigitalBlackoutIran #FreeIran #IranRevolution2026 #KingRezaPahlavi #FreeThePersianPeople
+5. Tag relevant accounts (pick 2-4): @PahlaviReza @realDonaldTrump @netanyahu @WhiteHouse @EmmanuelMacron @Keir_Starmer @JustinTrudeau @vonderleyen @GiorgiaMeloni @antonioguterres @_FriedrichMerz
+6. CRITICAL: The post MUST be under 280 characters. This is a hard limit. Count carefully.
+7. Be impactful, urgent, and varied in tone — don't repeat the same structure every time
 
 Generate only the post text, no additional commentary.""")
 
-SYSTEM_PROMPT = dedent("""You are a social media content creator focused on human rights and democracy. Create compelling, impactful posts that raise awareness about critical issues.""")  
+SYSTEM_PROMPT = dedent("""\
+You are a social media content creator focused on human rights, democracy, and the Iranian freedom movement. \
+Create compelling, impactful posts that raise awareness about the Iranian people's struggle for liberty. \
+You strongly support a democratic transition in Iran led by the people. \
+Every post MUST be under 280 characters — this is a hard technical limit.""")  
