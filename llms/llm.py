@@ -19,6 +19,7 @@ def _call_llm(messages: list) -> str:
         model=os.environ.get("OPENAI_MODEL"),
         messages=messages,
         max_completion_tokens=250,
+        temperature=1.3,
     )
     content = response.choices[0].message.content
     if not content:

@@ -6,41 +6,6 @@ An automated X (Twitter) bot that uses LLM to generate and post Iran awareness c
 
 ![Bot Pipeline](pipeline.png)
 
-```mermaid
-flowchart TD
-    A[🚀 Start Bot] --> B{Valid OAuth2 Token?}
-    B -->|No| C[OAuth2 PKCE Flow\nBrowser Authorization]
-    C --> D[Save Tokens to tokens.json]
-    D --> E[Create X API Client]
-    B -->|Yes| F{Token Expired?}
-    F -->|No| E
-    F -->|Yes| G[Refresh Access Token]
-    G -->|Success| E
-    G -->|Fail| C
-
-    E --> H[🔍 Fetch Trending Posts\n#KingRezaPahlavi OR #JavidShah\nX API v2 Search Recent]
-    H --> I[📝 Build LLM Prompt\nTrending Posts + Background Context]
-    I --> J[🤖 Generate Post via OpenAI GPT]
-    J --> K{Post ≤ 280 chars?}
-    K -->|No| L{Retries Left?}
-    L -->|Yes| J
-    L -->|No| M[Truncate to 280 chars]
-    K -->|Yes| N[📤 Post to X API]
-    M --> N
-
-    N -->|Success| O[✅ Tweet Posted]
-    N -->|Rate Limit 429| P[⏳ Wait Until Reset Time]
-    N -->|Auth Error| Q[🔄 Refresh Token & Retry]
-    N -->|Server Error 5xx| R[⏳ Wait 60s & Retry]
-    Q -->|Fail| S[🔐 Full Re-Auth Flow]
-    S --> N
-
-    O --> T[⏰ Sleep 30 Minutes]
-    P --> E
-    R --> E
-    T --> E
-```
-
 ## Features
 
 - 🤖 **LLM-Powered Content Generation** — Uses OpenAI GPT models to generate impactful posts about Iran awareness
