@@ -434,6 +434,31 @@ def setup_httpx_header_logging() -> None:
         logging.basicConfig(level=logging.DEBUG)
 
 
+TRENDING_QUERY = "(#KingRezaPahlavi OR #JavidShah) lang:en"
+TRENDING_MAX_RESULTS = 10
+
+
+def fetch_trending_posts(client: Client) -> list[str]:
+    """Fetch the latest posts about #KingRezaPahlavi and #JavidShah from X."""
+    try:
+        results = client.posts.search_recent(
+            query=TRENDING_QUERY,
+            max_results=TRENDING_MAX_RESULTS,
+            tweet_fields=["text"],
+        )
+        # Get first page only
+        page = next(results, None)
+        if page is None or not hasattr(page, "data") or not page.data:
+            print("No trending posts found.", file=sys.stderr)
+            return []
+        tweets = [tweet["text"] if isinstance(tweet, dict) else tweet.text for tweet in page.data]
+        print(f"Fetched {len(tweets)} trending posts for context.")
+        return tweets
+    except Exception as e:
+        print(f"Failed to fetch trending posts: {e}", file=sys.stderr)
+        return []
+
+
 def main() -> None:
     if not all([client_id, client_secret, redirect_uri]):
         print("Missing X_CLIENT_ID, X_CLIENT_SECRET, or X_REDIRECT_URI in environment.", file=sys.stderr)
@@ -452,9 +477,13 @@ def main() -> None:
         # Re-fetch client each iteration so we use a valid token (refresh if expired)
         client = get_valid_client()
         try:
+            # Fetch trending posts for context
+            print("Fetching trending posts for context...")
+            trending_posts = fetch_trending_posts(client)
+
             # Generate a new post using LLM
             print("Generating post using LLM...")
-            post_text = generate_iran_post()
+            post_text = generate_iran_post(trending_posts=trending_posts)
             print(f"Generated post: {post_text}")
             payload = {"text": post_text}
             
@@ -500,7 +529,7 @@ def main() -> None:
                 access_token = refresh_access_token()
                 client = Client(access_token=access_token)
                 # Regenerate post for retry
-                post_text = generate_iran_post()
+                post_text = generate_iran_post(trending_posts=trending_posts)
                 payload = {"text": post_text}
                 print("\nMaking request to X API (after token refresh)...")
                 response = client.posts.create(body=payload)

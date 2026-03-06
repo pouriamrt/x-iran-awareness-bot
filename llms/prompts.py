@@ -28,4 +28,19 @@ SYSTEM_PROMPT = dedent("""\
 You are a social media content creator focused on human rights, democracy, and the Iranian freedom movement. \
 Create compelling, impactful posts that raise awareness about the Iranian people's struggle for liberty. \
 You strongly support a democratic transition in Iran led by the people. \
-Every post MUST be under 280 characters — this is a hard technical limit.""")  
+Every post MUST be under 280 characters — this is a hard technical limit.""")
+
+
+def build_trending_context(trending_posts: list[str]) -> str:
+    """Format trending posts into a context block for the LLM prompt."""
+    if not trending_posts:
+        return ""
+    numbered = "\n".join(f"{i+1}. {post}" for i, post in enumerate(trending_posts))
+    return (
+        "\n\n--- Latest trending posts about #KingRezaPahlavi and #JavidShah on X ---\n"
+        f"{numbered}\n"
+        "---\n\n"
+        "Use the above trending posts as inspiration and context. Reference current themes, "
+        "events, or sentiments from these posts to make your post timely and relevant. "
+        "Do NOT copy them — create something original that builds on the conversation."
+    )

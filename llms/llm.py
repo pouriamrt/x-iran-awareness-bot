@@ -1,7 +1,7 @@
 import os
 import sys
 from openai import OpenAI
-from llms.prompts import SYSTEM_PROMPT, USER_PROMPT
+from llms.prompts import SYSTEM_PROMPT, USER_PROMPT, build_trending_context
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,14 +26,18 @@ def _call_llm(messages: list) -> str:
     return content.strip()
 
 
-def generate_iran_post() -> str:
+def generate_iran_post(trending_posts: list[str] | None = None) -> str:
     """
     Generate a post about the massacre in Iran using LLM.
+    Optionally uses trending posts as additional context.
     Retries up to MAX_RETRIES times if the post exceeds 280 characters.
     """
+    trending_context = build_trending_context(trending_posts or [])
+    user_content = USER_PROMPT + trending_context
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": USER_PROMPT},
+        {"role": "user", "content": user_content},
     ]
 
     try:
