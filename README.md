@@ -1,15 +1,55 @@
 # X Iran Awareness Bot
 
-An automated X (Twitter) bot that uses LLM to generate and post Iran awareness content on a scheduled basis with OAuth2 authentication.
+An automated X (Twitter) bot that uses LLM to generate and post Iran awareness content on a scheduled basis. It fetches trending posts about **#KingRezaPahlavi** and **#JavidShah** from X as real-time context for content generation, ensuring posts are timely and relevant to the ongoing conversation.
+
+## Pipeline
+
+![Bot Pipeline](pipeline.png)
+
+```mermaid
+flowchart TD
+    A[🚀 Start Bot] --> B{Valid OAuth2 Token?}
+    B -->|No| C[OAuth2 PKCE Flow\nBrowser Authorization]
+    C --> D[Save Tokens to tokens.json]
+    D --> E[Create X API Client]
+    B -->|Yes| F{Token Expired?}
+    F -->|No| E
+    F -->|Yes| G[Refresh Access Token]
+    G -->|Success| E
+    G -->|Fail| C
+
+    E --> H[🔍 Fetch Trending Posts\n#KingRezaPahlavi OR #JavidShah\nX API v2 Search Recent]
+    H --> I[📝 Build LLM Prompt\nTrending Posts + Background Context]
+    I --> J[🤖 Generate Post via OpenAI GPT]
+    J --> K{Post ≤ 280 chars?}
+    K -->|No| L{Retries Left?}
+    L -->|Yes| J
+    L -->|No| M[Truncate to 280 chars]
+    K -->|Yes| N[📤 Post to X API]
+    M --> N
+
+    N -->|Success| O[✅ Tweet Posted]
+    N -->|Rate Limit 429| P[⏳ Wait Until Reset Time]
+    N -->|Auth Error| Q[🔄 Refresh Token & Retry]
+    N -->|Server Error 5xx| R[⏳ Wait 60s & Retry]
+    Q -->|Fail| S[🔐 Full Re-Auth Flow]
+    S --> N
+
+    O --> T[⏰ Sleep 30 Minutes]
+    P --> E
+    R --> E
+    T --> E
+```
 
 ## Features
 
-- 🤖 **LLM-Powered Content Generation**: Uses OpenAI's GPT models to generate impactful posts about Iran awareness
-- 🔐 **OAuth2 PKCE Authentication**: Secure authentication flow with automatic token management
-- 🔄 **Automatic Token Refresh**: Handles token expiration and refresh automatically
-- ⏰ **Scheduled Posting**: Posts content every 30 minutes automatically
-- 🛡️ **Error Handling**: Robust error handling with automatic retry and re-authentication
-- 🌐 **Browser-Based Auth**: Seamless OAuth flow with automatic browser opening
+- 🤖 **LLM-Powered Content Generation** — Uses OpenAI GPT models to generate impactful posts about Iran awareness
+- 🔍 **Trending Context** — Fetches the latest 10 posts about #KingRezaPahlavi and #JavidShah from X to inform content generation
+- 🔐 **OAuth2 PKCE Authentication** — Secure authentication flow with automatic token management
+- 🔄 **Automatic Token Refresh** — Handles token expiration and refresh automatically
+- ⏰ **Scheduled Posting** — Posts content every 30 minutes automatically
+- 🛡️ **Error Handling** — Rate limit detection, token refresh retry, re-auth fallback, and server error recovery
+- 🌐 **Browser-Based Auth** — Seamless OAuth flow with automatic browser opening
 
 ## Prerequisites
 
@@ -45,8 +85,9 @@ An automated X (Twitter) bot that uses LLM to generate and post Iran awareness c
    X_CLIENT_SECRET=your_client_secret_here
    X_REDIRECT_URI=http://127.0.0.1:8080/callback
 
-   # OpenAI API Key
+   # OpenAI
    OPENAI_API_KEY=your_openai_api_key_here
+   OPENAI_MODEL=gpt-4o
    ```
 
 2. **Get X API Credentials:**
@@ -66,11 +107,6 @@ An automated X (Twitter) bot that uses LLM to generate and post Iran awareness c
    uv run python main.py
    ```
 
-   Or with `pip`:
-   ```bash
-   python main.py
-   ```
-
 2. **First-time Authorization:**
    - The bot will automatically open your browser for X authorization
    - Complete the OAuth flow in the browser
@@ -78,50 +114,38 @@ An automated X (Twitter) bot that uses LLM to generate and post Iran awareness c
    - You can close the browser tab after authorization
 
 3. **Automatic Operation:**
-   - The bot will generate a post using the LLM
-   - Post it to X/Twitter
-   - Wait 30 minutes before posting again
-   - This cycle continues indefinitely
-
-## How It Works
-
-1. **Authentication Flow:**
-   - On first run, the bot opens a browser for OAuth2 PKCE authentication
-   - A local HTTP server listens for the OAuth callback
-   - Tokens are saved to `tokens.json` for future use
-
-2. **Content Generation:**
-   - The bot uses OpenAI's GPT model to generate posts about Iran awareness
-   - Posts include relevant hashtags and mentions of world leaders
-   - Content is generated to stay within X's 280-character limit
-
-3. **Posting Cycle:**
-   - Generates a new post every 30 minutes
-   - Automatically handles token refresh if needed
-   - Retries with token refresh on failure
-   - Falls back to re-authentication if refresh fails
-
-4. **Error Recovery:**
-   - If posting fails, the bot attempts to refresh the access token
-   - If refresh fails, it removes old tokens and re-authenticates
-   - The bot continues running even after errors
+   - The bot fetches trending posts about #KingRezaPahlavi and #JavidShah
+   - Generates a context-aware post using the LLM
+   - Posts it to X
+   - Waits 30 minutes and repeats
 
 ## Project Structure
 
 ```
 X_bot/
-├── main.py           # Main bot logic and OAuth flow
-├── llm.py            # LLM content generation
-├── pyproject.toml    # Project dependencies and metadata
-├── tokens.json       # Saved OAuth tokens (generated at runtime)
-├── .env              # Environment variables (create this)
-└── README.md         # This file
+├── main.py              # Entry point, OAuth flow, token management, main loop
+├── llms/
+│   ├── llm.py           # OpenAI GPT content generation with trending context
+│   └── prompts.py       # System/user prompts and trending context builder
+├── pyproject.toml       # Project dependencies and metadata
+├── pipeline.png         # Pipeline diagram
+├── tokens.json          # Saved OAuth tokens (generated at runtime, gitignored)
+├── .env                 # Environment variables (create this, gitignored)
+└── README.md
 ```
+
+## How It Works
+
+1. **Authentication** — OAuth2 PKCE flow via browser, tokens persisted in `tokens.json` with automatic refresh
+2. **Trending Fetch** — Searches X API v2 for recent posts matching `(#KingRezaPahlavi OR #JavidShah) lang:en`
+3. **Content Generation** — Trending posts are injected as primary context into the LLM prompt alongside background context about the Iranian freedom movement
+4. **Posting** — Generated post is validated (≤280 chars) and posted via X API
+5. **Error Recovery** — Rate limits (429), auth errors (401/403), and server errors (5xx) are each handled with appropriate retry strategies
 
 ## Troubleshooting
 
 ### Bot gets stuck when opening browser
-- The bot now includes a 5-minute timeout for OAuth callbacks
+- The bot includes a 5-minute timeout for OAuth callbacks
 - If authorization takes too long, the bot will show an error message
 - Simply restart the bot and complete the authorization quickly
 
@@ -138,6 +162,12 @@ X_bot/
 ### Port already in use
 - Change the `X_REDIRECT_URI` in your `.env` to use a different port
 - Update the redirect URI in your X Developer Portal app settings
+
+## Key Dependencies
+
+- **[xdk](https://pypi.org/project/xdk/)** — X API client library (OAuth2, posts, search)
+- **[openai](https://pypi.org/project/openai/)** — OpenAI Python SDK for content generation
+- **[python-dotenv](https://pypi.org/project/python-dotenv/)** — Loads `.env` configuration
 
 ## License
 
