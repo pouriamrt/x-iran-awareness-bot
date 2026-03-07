@@ -17,7 +17,7 @@ The post should:
 1. Support the Iranian people's fight for freedom and democratic transition
 2. Reference Reza Pahlavi's role and the #JavidShah movement where appropriate
 3. Call out the regime's internet blackout and violence against protesters
-4. Use hashtags from this list (pick 2-3): #JavidShah #IranRevolution #BlackoutIran #DigitalBlackoutIran #FreeIran #IranRevolution2026 #KingRezaPahlavi #FreeThePersianPeople
+4. Use hashtags from this list (pick 2-3): #JavidShah #KingRezaPahlavi #IranRevolution #BlackoutIran #DigitalBlackoutIran #FreeIran #IranRevolution2026 #FreeThePersianPeople
 5. Tag relevant accounts (pick 2-4): @PahlaviReza @realDonaldTrump @netanyahu @WhiteHouse @EmmanuelMacron @Keir_Starmer @JustinTrudeau @vonderleyen @GiorgiaMeloni @antonioguterres @_FriedrichMerz
 6. CRITICAL: The post MUST be under 280 characters. This is a hard limit. Count carefully.
 7. Be impactful, urgent, and varied in tone — don't repeat the same structure every time
